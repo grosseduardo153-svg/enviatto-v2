@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net - Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Administrador do SaaS (Bootstrapped para o dono da aplicação)
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'grosseduardo153@gmail.com' ||
+        request.auth.token.email == 'eduardogross525@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'plan', 'conversionsLimit', 'conversionsUsed', 'conversionsRemaining'])
+        && data.uid is string && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 150
+        && data.plan in ['gratuito', 'basico', 'profissional']
+        && data.conversionsLimit is number && data.conversionsLimit >= 0
+        && data.conversionsUsed is number && data.conversionsUsed >= 0
+        && data.conversionsRemaining is number && data.conversionsRemaining >= 0;
+    }
+
+    function isValidConversion(data) {
+      return data.keys().hasAll(['id', 'userId', 'filename', 'status', 'timestamp'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && (!('workspaceId' in data) || (data.workspaceId is string && data.workspaceId.size() <= 128))
+        && (!('tenantId' in data) || (data.tenantId is string && data.tenantId.size() <= 128))
+        && data.filename is string && data.filename.size() <= 255
+        && data.status in ['sucesso', 'erro']
+        && data.timestamp is string;
+    }
+
+    // Regras para a Coleção de Usuários (/users/{userId})
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin(); // Apenas Admin pode listar todos os usuários
+
+      // Criação de perfil no primeiro login ou cadastro (usuários comuns nunca podem se auto-atribuir isAdmin)
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == userId
+        && isValidUser(request.resource.data)
+        && (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false || isAdmin());
+
+      // Atualização permitida pelo usuário autenticado ou pelo Admin
+      allow update: if (
+        isAdmin() ||
+        (isOwner(userId)
+          && request.resource.data.uid == userId
+          && isValidUser(request.resource.data)
+          && request.resource.data.email == resource.data.email
+          && (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == resource.data.isAdmin)
+          && (!('suspended' in request.resource.data) || request.resource.data.suspended == resource.data.suspended)
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Regras para o Histórico de Conversões (/conversions/{conversionId}) com isolamento Multi-Tenant
+    match /conversions/{conversionId} {
+      allow get: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.workspaceId == ('ws_' + request.auth.uid))) || isAdmin();
+      allow list: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.workspaceId == ('ws_' + request.auth.uid))) || isAdmin();
+
+      allow create: if isSignedIn()
+        && (request.resource.data.userId == request.auth.uid || isAdmin())
+        && isValidConversion(request.resource.data);
+
+      allow update, delete: if isAdmin();
+    }
+  }
+}

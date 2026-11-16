@@ -1,0 +1,8 @@
+{
+  "name": "Shopee Thermal Label Hub - Processador de Etiquetas 10x15",
+  "description": "Processador profissional de PDFs da Shopee: unificação de etiquetas de envio com lista de separação vinculadas pelo ID do pedido em etiquetas térmicas 10x15 cm.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
